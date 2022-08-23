@@ -3,7 +3,7 @@
 This repository is part of the final project submited to Udacity for the Data Science Nanodegree.
 The objective is to predict churn, from a simulated music streaming app, using historical data from user interactions.
 
-
+A blog post with a detailed analysis is available at https://medium.com/@ttozatto.ds/churn-prediction-for-music-streaming-app-sparkify-d6e26d1ac80f
 
 ## Dependencies
   - pyspark
@@ -12,7 +12,7 @@ The objective is to predict churn, from a simulated music streaming app, using h
  ## Files
   - utils.py -> function to load and treat data, create, train and evaluate ML models
   - main.py -> script to run the full process, from loading the dataset to showing results
-  - medium-sparkify-event-data.json -> dataset with user interactions in the app. Available in: [https://video.udacity-data.com/topher/2018/December/5c1d6681_medium-sparkify-event-data/medium-sparkify-event-data.json]
+  - medium-sparkify-event-data.json -> dataset with user interactions in the app. Available at: https://video.udacity-data.com/topher/2018/December/5c1d6681_medium-sparkify-event-data/medium-sparkify-event-data.json
   
  ## Summary of Results
  ### Test Scores
