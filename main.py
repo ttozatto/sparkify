@@ -3,8 +3,6 @@ from utils import printL as print
 from pyspark.sql import SparkSession
 from pyspark.conf import SparkConf
 
-import IPython
-
 
 def main():
 
@@ -12,7 +10,7 @@ def main():
 
     print('CREATING SPARK SESSION...')
     spark = SparkSession.builder \
-        .master("local[5]") \
+        .master("local[*]") \
         .appName("Churn Prediction") \
         .config("spark.driver.memory", '1g') \
         .config("spark.executor.cores", '5') \
@@ -25,13 +23,12 @@ def main():
     print("\n\nSPARK CONF: {}\n\n".format(conf.getAll()))
 
     print('READING FILE...')
-    df = spark.read.json("mini_sparkify_event_data.json")
-    # df = spark.read.json("medium-sparkify-event-data.json")
+    df = spark.read.json("medium-sparkify-event-data.json")
     df.persist()
 
     print('CLEANING DATA...')
     df = utils.clean_data(df)
-    print('CREATING CHURN_USER COLUMN...')
+    print('CREATING LABEL COLUMN...')
     df = utils.insert_churn(df)
     print('CREATING FEATURES...')
     df = utils.create_features(df)
@@ -39,12 +36,11 @@ def main():
     df_train, df_test = utils.split_users(df)
 
     models = []
-    # for filter in [None, 'mean', 'last']:
-    for filter in ['last']:
+    for filter in ['mean', 'last', None]:
+        print("FILTER: ", filter)
 
         scores = []
-        # models_list = ['random forest', 'mlp', 'logistic regression', 'gbt']
-        models_list = ['random forest']
+        models_list = ['random forest', 'mlp', 'logistic regression', 'gbt']
 
         for model_type in models_list:
 
@@ -56,8 +52,9 @@ def main():
             scores.append(utils.evaluate_model(trained_model, df_test, filter=filter))
             models.append(trained_model)
             print('PLOTTING TRAINING RESULT...')
-            utils.plot_pr_curve(trained_model)
-            # IPython.embed()
+
+            if model_type == 'random forest':
+                utils.plot_pr_curve(trained_model)
 
         for i, model_type in enumerate(models_list):
 
@@ -71,5 +68,4 @@ def main():
 
 
 if __name__ == '__main__':
-    
     main()

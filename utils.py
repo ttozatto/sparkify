@@ -7,30 +7,35 @@ from pyspark.sql import SparkSession
 from pyspark.ml.feature import MinMaxScaler, VectorAssembler
 from pyspark.ml.classification import MultilayerPerceptronClassifier, RandomForestClassifier, \
                                         LogisticRegression, GBTClassifier
-from pyspark.ml.evaluation import MulticlassClassificationEvaluator, BinaryClassificationEvaluator
-from pyspark.ml.tuning import ParamGridBuilder, TrainValidationSplit, CrossValidator
+from pyspark.ml.evaluation import MulticlassClassificationEvaluator
+from pyspark.ml.tuning import ParamGridBuilder, TrainValidationSplit
 from pyspark.ml import Pipeline
 
 from itertools import chain
 import time
 import random
 from datetime import datetime
-import numpy as np
-import pandas as pd
 from matplotlib import pyplot as plt
-
-import IPython
 
 
 spark = SparkSession.builder.getOrCreate()
 
-# evaluator = MulticlassClassificationEvaluator(metricLabel=1, 
-    #                                 metricName='f1')
-
-evaluator = BinaryClassificationEvaluator(metricName='areaUnderPR')
+evaluator = MulticlassClassificationEvaluator(metricName='f1', metricLabel=1)
 
 
-def count_pages(df, new_columns, pages, partition='sessionId'):
+def count_pages(df, new_columns, pages, partition='sessionId', time=False):
+    """
+    count the time spent in each page, can be grouped by session or user
+
+    params:
+    --------
+    df: spark DataFrame
+    new_columns: list of names for the new columns
+    pages: list of pages to be counted
+    partition: sessionId or userId
+
+    returns the transformed spark DataFrame
+    """
     
     assert len(new_columns) == len(pages)
     assert type(new_columns) == list
@@ -40,29 +45,18 @@ def count_pages(df, new_columns, pages, partition='sessionId'):
     windowval = (Window.partitionBy('sessionId').orderBy('ts')
              .rangeBetween(Window.unboundedPreceding, 0))
     
+    if time:
+        count_value = df.deltaT
+    else:
+        count_value = 1
+
     for i in range(len(new_columns)):
-        df = df.withColumn(new_columns[i]+'_bool', when(df.page == pages[i], df.deltaT)
+        df = df.withColumn(new_columns[i]+'_bool', when(df.page == pages[i], count_value)
                                            .otherwise(0))
         
         df = df.withColumn(new_columns[i], F.sum(new_columns[i]+'_bool').over(windowval))
         df = df.drop(new_columns[i]+'_bool')
         
-    return df
-
-
-def count_features(df, new_columns, features, partition='sessionId'):
-    
-    assert len(new_columns) == len(features)
-    assert type(new_columns) == list
-    assert type(features) == list
-    assert partition == 'sessionId' or partition == 'userId'
-    
-    windowval = (Window.partitionBy('sessionId').orderBy('ts')
-             .rangeBetween(Window.unboundedPreceding, 0))
-    
-    for i in range(len(new_columns)):
-        df = df.withColumn(new_columns[i], F.sum(features[i]).over(windowval))
-
     return df
 
 
@@ -95,7 +89,7 @@ def insert_churn(df):
     churn_users = list(df_aux.select('userId').filter(col('plan_change')==-1).collect())
     churn_users = [u.userId for u in churn_users]
 
-    df = df.withColumn('churn_user', when(col('userId').isin(churn_users), 1).otherwise(0))
+    df = df.withColumn('label', when(col('userId').isin(churn_users), 1).otherwise(0))
 
     return df
 
@@ -123,15 +117,28 @@ def create_features(df):
 
     df_songs = df_songs.withColumn('userSongs', F.count('song').over(windowval2))
 
-    df_song_hour = df_songs.withColumn('songs_hour', col('sessionSongs')/(col('sessionTime')/(60*60)))
-    df_song_hour = df_song_hour.na.fill({'songs_hour':'0.0'})
+    df_song_hour = df_songs.withColumn('songsHour', col('sessionSongs')/(col('sessionTime')/(60*60)))
+    df_song_hour = df_song_hour.na.fill({'songsHour':'0.0'})
 
-    df_pre_final = count_pages(df_song_hour, ['sessionTup', 'sessionTdown', 'sessionAds'], 
-                           ['Thumbs Up', 'Thumbs Down', 'Roll Advert'], partition='sessionId')
+    df_pre_final = count_pages(df_song_hour, ['sessionTup', 'sessionTdown'], 
+                           ['Thumbs Up', 'Thumbs Down'], partition='sessionId',
+                           time=False)
 
-    df_pre_final = count_pages(df_pre_final, ['userTup', 'userTdown', 'userAds', 'userHelp', 'userAbout'], 
-                           ['Thumbs Up', 'Thumbs Down', 'Roll Advert', 'Help', 'About']
-                           , partition='userId')
+    df_pre_final = count_pages(df_pre_final, ['sessionAds'], 
+                           ['Roll Advert'], partition='sessionId',
+                           time=True)
+
+    df_pre_final = count_pages(df_pre_final, ['userTup', 'userTdown', 'about', 'downgrade', 
+                                                'upgrade', 'submitUpgrade', 'playlist', 'friend',
+                                                 'userError', 'save'], 
+                           ['Thumbs Up', 'Thumbs Down', 'About', 'Downgrade', 'Upgrade', 
+                           'Submit Upgrade', 'Add to Playlist', 'Add Friend',
+                            'Error', 'Save Settings']
+                           , partition='userId', time=False)
+
+    df_pre_final = count_pages(df_pre_final, ['userAds'], 
+                           ['Roll Advert']
+                           , partition='userId', time=True)
 
     df_pre_final = df_pre_final.withColumn('male', when(col('gender')=='M', 1).otherwise(0))
     df_pre_final = df_pre_final.withColumn('female', when(col('gender')=='F', 1).otherwise(0))
@@ -145,19 +152,21 @@ def create_features(df):
     df_pre_final = df_pre_final.withColumn('paid', when(col('level')=='paid', 1).otherwise(0))
     df_pre_final = df_pre_final.withColumn('free', when(col('level')=='free', 1).otherwise(0))
 
-    features = ['userId', 'itemInSession', 'male', 'female', 'paid', 'free', 'paidPerc', 
+    features = ['userId', 'itemInSession', 'songsHour', 'male', 'female', 'paid', 'free', 'paidPerc', 
                 'sessionTime', 'userTime', 'sessionSongs', 'userSongs', 'sessionTup', 
                 'userTup', 'sessionTdown', 'userTdown', 'sessionAds', 'userAds', 
-                'userHelp', 'userAbout', 'churn_user']       
+                'userError', 'save', 'downgrade', 'upgrade', 'submitUpgrade', 'about',
+                'playlist', 'friend', 'label']       
 
-    return df_pre_final.select(*features[:-1], col('churn_user').alias('label'))
+    return df_pre_final.select(*features[:-1], col('label'))
 
 
 def create_model(classifier_type='random forest'):
 
-    train_features = ['paidPerc', 'sessionTime', 'userTime', 'userSongs', 'sessionTup', 
-                    'userTup', 'sessionTdown', 'userTdown', 'sessionAds', 'userAds',
-                    'userHelp', 'userAbout']
+    train_features = ['songsHour', 'male', 'female', 'paidPerc', 'sessionTime', 'userTime', 
+                    'userSongs', 'sessionTup', 'userTup', 'sessionTdown', 'userTdown', 
+                    'sessionAds', 'userAds', 'userError', 'save', 'downgrade', 'upgrade', 
+                    'submitUpgrade', 'about', 'playlist', 'friend']
 
     assembler = VectorAssembler(inputCols=train_features, outputCol='vectorFeatures')
     scaler = MinMaxScaler(inputCol='vectorFeatures', outputCol='scaledFeatures')
@@ -165,7 +174,7 @@ def create_model(classifier_type='random forest'):
     if classifier_type == 'random forest':
         classifier = RandomForestClassifier(featuresCol='scaledFeatures', seed=42)
         paramGrid = ParamGridBuilder() \
-                    .addGrid(classifier.maxDepth, [24]) \
+                    .addGrid(classifier.maxDepth, [8, 12, 24]) \
                     .addGrid(classifier.numTrees, [8, 16, 32]) \
                     .addGrid(classifier.maxBins, [24]) \
                     .addGrid(classifier.impurity, ['gini']) \
@@ -175,13 +184,12 @@ def create_model(classifier_type='random forest'):
         classifier = MultilayerPerceptronClassifier(featuresCol='scaledFeatures', seed=42)
         paramGrid = ParamGridBuilder() \
                     .addGrid(classifier.maxIter, [500]) \
-                    .addGrid(classifier.stepSize, [0.015]) \
+                    .addGrid(classifier.stepSize, [0.03]) \
                     .addGrid(classifier.layers, [
-                        # [len(train_features), 8, 2],
-                        # [len(train_features), 32, 2],
-                        # [len(train_features), 32, 8, 2],
-                        [len(train_features), 64, 8, 2]
-                        # [len(train_features), 128, 64, 8, 2],
+                        [len(train_features), 32, 2],
+                        [len(train_features), 32, 8, 2],
+                        [len(train_features), 64, 8, 2],
+                        [len(train_features), 128, 64, 8, 2],
                         ]) \
                     .build()
 
@@ -207,12 +215,6 @@ def create_model(classifier_type='random forest'):
                             evaluator=evaluator,
                             seed=42, 
                             trainRatio=0.7)
-
-    # cv = CrossValidator(estimator=classifier, estimatorParamMaps=paramGrid, 
-    #                     evaluator=evaluator,
-    #                     numFolds=5,
-    #                     seed=42,
-    #                     parallelism=5)
 
     return Pipeline(stages=[assembler, scaler, tvs])
 
@@ -289,5 +291,5 @@ def plot_pr_curve(model):
     df.plot()
     df['delta'] = abs(df.precision - df.recall)
     plt.axvline(df.iloc[df.delta.argmin()].name, color='r')
-    plt.legend(loc = 'lower left')
+    plt.legend(loc='lower left')
     plt.savefig('precision_recall.png')
