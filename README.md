@@ -13,7 +13,7 @@ A blog post with a detailed analysis is available at https://medium.com/@ttozatt
   - utils.py -> function to load and treat data, create, train and evaluate ML models
   - main.py -> script to run the full process, from loading the dataset to showing results
   - medium-sparkify-event-data.json -> dataset with user interactions in the app. Available at: https://video.udacity-data.com/topher/2018/December/5c1d6681_medium-sparkify-event-data/medium-sparkify-event-data.json
-  - Sparkify.ipynb -> Initial exploratory analysis. Final modeling and tunig were done in the 2 scripts listed above.
+  - Sparkify.ipynb -> Initial exploratory analysis. Final modeling and tuning were done in the 2 scripts listed above.
   
  ## Summary of Results
  ### Test Scores
